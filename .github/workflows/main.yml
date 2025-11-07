@@ -1,0 +1,69 @@
+name: Replicate Latest Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  replicate_release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest release info from XrayKit repo
+        id: get_latest
+        env:
+          REPO_OWNER: thebytearray
+          REPO_NAME: XrayKit
+        run: |
+          echo "Fetching latest release data..."
+          release_json=$(curl -s -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
+          echo "$release_json" > latest_release.json
+          # Extract tag name and release name
+          tag_name=$(echo "$release_json" | jq -r .tag_name)
+          release_name=$(echo "$release_json" | jq -r .name)
+          body=$(echo "$release_json" | jq -r .body)
+          # Export outputs
+          echo "::set-output name=tag::$tag_name"
+          echo "::set-output name=name::$release_name"
+          echo "::set-output name=body::$body"
+          # Save asset URLs and names for download
+          asset_count=$(echo "$release_json" | jq '.assets | length')
+          echo "::set-output name=asset_count::$asset_count"
+          for i in $(seq 0 $(($asset_count - 1))); do
+            url=$(jq -r ".assets[$i].browser_download_url" < latest_release.json)
+            name=$(jq -r ".assets[$i].name" < latest_release.json)
+            echo "::set-output name=asset_url_$i::$url"
+            echo "::set-output name=asset_name_$i::$name"
+          done
+
+      - name: Download release assets
+        if: steps.get_latest.outputs.asset_count != '0'
+        run: |
+          mkdir assets
+          for i in $(seq 0 $((${ { steps.get_latest.outputs.asset_count } } - 1))); do
+            url=${{ steps.get_latest.outputs['asset_url_' + i] }}
+            name=${{ steps.get_latest.outputs['asset_name_' + i] }}
+            curl -L $url -o assets/$name
+          done
+
+      - name: Create release in THIS repo
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_latest.outputs.tag }}
+          release_name: ${{ steps.get_latest.outputs.name }}
+          body: ${{ steps.get_latest.outputs.body }}
+          draft: false
+          prerelease: false
+
+      - name: Upload assets to new release
+        if: steps.get_latest.outputs.asset_count != '0'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./assets/
+          asset_name: ''
+          asset_content_type: application/octet-stream
