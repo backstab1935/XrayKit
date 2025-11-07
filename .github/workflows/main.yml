@@ -25,10 +25,29 @@ jobs:
           body=$(echo "$release_json" | jq -r .body)
           assets=$(echo "$release_json" | jq -c '.assets | map({url: .browser_download_url, name: .name})')
 
-          echo "::set-output name=tag::$tag_name"
-          echo "::set-output name=name::$release_name"
-          echo "::set-output name=body::$body"
-          echo "::set-output name=assets::$assets"
+          # Use new environment file syntax to export outputs
+          echo "tag=$tag_name" >> $GITHUB_OUTPUT
+          echo "name=$release_name" >> $GITHUB_OUTPUT
+          echo "body=$body" >> $GITHUB_OUTPUT
+          echo "assets=$assets" >> $GITHUB_OUTPUT
+
+      - name: Check if release tag exists in THIS repo
+        id: check_tag
+        run: |
+          if gh release view ${{ steps.get_latest.outputs.tag }} >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete existing release if exists
+        if: steps.check_tag.outputs.exists == 'true'
+        run: |
+          gh release delete ${{ steps.get_latest.outputs.tag }} --yes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download release assets
         run: |
